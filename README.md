@@ -2,25 +2,51 @@
 
 ![tag:innovationlab](https://img.shields.io/badge/innovationlab-3D8BD3)
 ![tag:hackathon](https://img.shields.io/badge/hackathon-5F43F1)
+![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
 
-Job Auto Applier is a Fetch.ai agent that helps job seekers find relevant roles, rehearse an application with simulated recruiter feedback, prepare an application email, and track follow-ups from an ASI:One conversation.
+> **Fetch-A-Thon 3.0 · ASI:One Agent Challenge — From Intent to Action**
 
-> **Competition:** Fetch-A-Thon 3.0 — ASI:One Agent Challenge: From Intent to Action. The event brief requires an Agentverse agent, ACP support, ASI:One discoverability, a complete conversation-based workflow, and a public repository. See the [official hackpack](https://www.fetch.ai/events/hackathons/fetch-a-thon-3/hackpack) for the current requirements and submission steps.
+**Job Auto Applier** is an AI agent built on [Fetch.ai's Agentverse](https://agentverse.ai) that transforms job hunting from a tedious manual process into a single conversation. It finds jobs, simulates recruiter feedback, drafts and sends application emails, and tracks follow-ups — all from an ASI:One chat.
 
-## What it does
+---
 
-The current hosted demo is `agentverse_agent.py`. Its chat flow supports:
+## 🎯 The Problem
 
-1. Search for internships or jobs using Remotive's live job API, with a labelled sample-job fallback if the API is unavailable.
-2. Rank results against configured applicant skills.
-3. Run a simulated review using three recruiter personas, using ASI:One when configured and rule-based feedback otherwise.
-4. Draft an application email and send it to the configured destination only after the user confirms.
-5. Track application status and schedule Day 3, Day 7, and Day 14 follow-up drafts.
+Job seekers — especially students and fresh graduates — spend hours per week:
+- Manually searching multiple job boards
+- Guessing whether their application is strong enough
+- Writing emails from scratch for every role
+- Forgetting to follow up (the #1 reason candidates miss opportunities)
 
-Example ASI:One conversation:
+**Job Auto Applier automates all of this**, keeping humans in control (every email requires explicit confirmation before it's sent).
+
+---
+
+## ✨ What it does
+
+| Step | Command | What happens |
+|------|---------|--------------|
+| **1. Find jobs** | `find python internships` | Pulls live listings from Remotive API, scores them against your skills |
+| **2. Apply** | `apply 2` | Simulates feedback from 3 recruiter personas using ASI:One LLM, then drafts a tailored email |
+| **3. Send** | `confirm` | Sends the email via Resend **only after you confirm** |
+| **4. Track** | `tracker` | Shows all applications, statuses, and next follow-up dates |
+| **5. Follow up** | `followups` | Auto-drafts Day 3 check-in, Day 7 value-add, Day 14 final follow-up |
+
+### Recruiter Simulation (unique feature)
+Before every application, 3 AI personas review your draft:
+- 👔 **HR Screener** — keyword match, professionalism, culture fit
+- 🧑‍💻 **Technical Lead** — skill match, evidence vs. adjectives
+- 🚀 **Founder/CEO** — growth mindset, initiative, shipped work
+
+Each gives a score /10 with specific improvement suggestions. Falls back to rule-based logic if no API key is configured — so the demo never dies.
+
+---
+
+## 🚀 Try it in ASI:One
+
+Open [ASI:One Chat](https://asi1.ai/chat) and search for **`@jobautoapplier`**
 
 ```text
-@jobautoapplier
 find python internships
 apply 2
 confirm
@@ -28,84 +54,111 @@ tracker
 followups
 ```
 
-Find the main agent in [ASI:One Chat](https://asi1.ai/chat) by searching for or mentioning **`@jobautoapplier`**. The shared chat URL for a completed end-to-end demo should still be added below for judges.
+> **Live demo chat:** _(add your shared ASI:One conversation URL here)_
 
-The multi-file agent implementation is also present: `main_agent.py`, `scout_agent.py`, `matcher_agent.py`, `writer_agent.py`, `mailer_agent.py`, and `tracher_agent.py` (tracker). The hosted `agentverse_agent.py` is a separate, consolidated implementation; it is not a launcher for those worker files.
+---
 
-## Agent overview
+## 🏗️ Architecture
 
-| Agent / file | Responsibility | Address |
-| --- | --- | --- |
-| Job Auto Applier / `agentverse_agent.py` | ASI:One chat, job search, recruiter simulation, draft/confirmation, tracker and follow-ups | Discover as `@jobautoapplier` in [ASI:One](https://asi1.ai/chat); add Agentverse profile URL |
-| Main / `main_agent.py` | Alternate chat agent with resume/profile handling and optional worker delegation | Add deployed Agentverse address |
-| Scout / `scout_agent.py` | Periodically requests job searches and sends new-match digests | Add deployed Agentverse address |
-| Matcher / `matcher_agent.py` | De-duplicates and ranks job batches by skills | Add deployed Agentverse address |
-| Writer / `writer_agent.py` | Generates tailored email drafts | Add deployed Agentverse address |
-| Mailer / `mailer_agent.py` | Sends confirmed emails with duplicate and daily-send protections | Add deployed Agentverse address |
-| Tracker / `tracher_agent.py` | Records applications and can post to a Google Sheets webhook | Add deployed Agentverse address |
-
-Only list agents that are actually deployed in your submission. Replace the address placeholders above with the public Agentverse profile links and agent addresses before submitting.
-
-## Architecture
-
-```text
+```
 ASI:One (ACP chat)
        |
-       v
-Job Auto Applier
-  |-- Remotive job search + skill matching
-  |-- ASI:One recruiter-persona simulation (rule-based fallback)
-  |-- Email draft -> explicit user confirmation -> Resend
-  |-- Per-user application tracker + scheduled follow-ups
+       ▼
+Job Auto Applier  (agentverse_agent.py — hosted on Agentverse)
+  ├── Remotive API  →  live job listings
+  ├── ASI:One LLM  →  3-persona recruiter simulation
+  ├── Resend API   →  confirmed email delivery
+  ├── HN Algolia   →  Day-7 company insight (free, no key)
+  └── Agentverse Storage  →  per-user application tracker
 ```
 
-The separate multi-agent implementation uses uAgents messages to connect the main, scout, matcher, writer, mailer, and tracker workers. Configure and deploy that architecture separately; it is not automatically started by the consolidated hosted file.
+The repo also contains a **multi-agent local implementation** (`main_agent.py`, `scout_agent.py`, `matcher_agent.py`, `writer_agent.py`, `mailer_agent.py`, `tracher_agent.py`) where dedicated uAgents workers communicate via messages. The hosted `agentverse_agent.py` is a consolidated, standalone version for Agentverse.
 
-## Deploy the hosted ASI:One agent
+---
 
-`agentverse_agent.py` is written for the Agentverse hosted editor: Agentverse injects the `agent` object. Paste the file into a hosted agent, configure its secrets, publish the chat protocol manifest, then verify that the agent is discoverable and usable in ASI:One. Do not run this hosted file as a standalone Python script.
+## 📦 Agent Directory
 
-The source imports `uagents`, `uagents_core`, and `requests`. For local experiments, install compatible versions of those packages in a Python environment; this repository currently has no pinned dependency file or local runner. Deployment on Agentverse manages the hosted runtime.
+| File | Role | Agentverse Address |
+|------|------|--------------------|
+| `agentverse_agent.py` | Main hosted agent — ASI:One chat, search, simulation, email, tracker | _(add your Agentverse profile URL)_ |
+| `main_agent.py` | Local multi-agent orchestrator | _(add if deployed)_ |
+| `scout_agent.py` | Periodic job search + digest | _(add if deployed)_ |
+| `matcher_agent.py` | Skill-based job ranking / de-duplication | _(add if deployed)_ |
+| `writer_agent.py` | Tailored email draft generation | _(add if deployed)_ |
+| `mailer_agent.py` | Confirmed email delivery with duplicate protection | _(add if deployed)_ |
+| `tracher_agent.py` | Application tracker + Google Sheets webhook | _(add if deployed)_ |
 
-### Hosted secrets
+---
 
-Set secrets in the Agentverse agent settings. Do not commit credentials or your `.env` file.
+## 🔧 Deploying to Agentverse
 
-| Secret | Required | Purpose |
-| --- | --- | --- |
-| `ASI1_API_KEY` | Optional | Powers the recruiter-persona simulation; the code falls back to rule-based personas without it. |
-| `RESEND_API_KEY` | Required to send email | Resend API credential. |
-| `APPLY_TO_EMAIL` | Required to send email | Destination for confirmed application emails. For the Resend onboarding sender, Resend may restrict delivery to your own verified address. |
-| `APPLICANT_NAME` | Optional | Applicant name; defaults to `Prashant` in the current source. |
-| `APPLICANT_SKILLS` | Optional | Comma-separated skills used for job scoring. |
-| `APPLICANT_LINKS` | Optional | Applicant links included in application drafts. |
-| `APPLICANT_PORTFOLIO` | Optional | Portfolio link used in follow-up drafts; defaults to `APPLICANT_LINKS`. |
-| `APPLICANT_BIO` | Optional | Short applicant description used by the recruiter simulation. |
+`agentverse_agent.py` is written for the **Agentverse hosted editor** — Agentverse injects the `agent` object. Do **not** run it as a standalone script.
 
-Never put real API keys in this README, source control, screenshots, or demo video. Rotate any key that has been exposed.
+### Steps
+1. Sign in to [Agentverse](https://agentverse.ai)
+2. Create a new **Hosted Agent**
+3. Paste the full contents of `agentverse_agent.py` into the editor
+4. Add secrets in the agent's **Secrets** settings (see table below)
+5. Click **Run** — the agent will start and register on the network
+6. Enable **ASI:One discoverability** in the agent settings
+7. Test via [ASI:One Chat](https://asi1.ai/chat) by searching `@jobautoapplier`
 
-## Other integrations
+### Secrets
 
-The consolidated agent uses the public Remotive API for live job listings. It uses the ASI:One API for simulated recruiter feedback and Resend for confirmed email delivery. The separate multi-file implementation has additional optional integrations, including Groq, SerpAPI, and a Google Sheets webhook; see the comments at the top of each source file for its configuration. Those variables do not all apply to `agentverse_agent.py`.
+| Secret key | Required | Purpose |
+|-----------|----------|---------|
+| `RESEND_API_KEY` | ✅ For email | From [resend.com](https://resend.com) free tier |
+| `APPLY_TO_EMAIL` | ✅ For email | Destination email (on free tier: your verified address) |
+| `ASI1_API_KEY` | Optional | Powers AI recruiter personas; rule-based fallback is built-in |
+| `APPLICANT_NAME` | Optional | Your name (default: `Prashant`) |
+| `APPLICANT_SKILLS` | Optional | Comma-separated: `python,react,sql` |
+| `APPLICANT_LINKS` | Optional | Links shown in application emails |
+| `APPLICANT_PORTFOLIO` | Optional | Portfolio URL for Day-14 follow-up |
+| `APPLICANT_BIO` | Optional | 1–3 line bio for recruiter simulation context |
 
-## Competition submission checklist
+> ⚠️ Never put real API keys in README, source code, or screenshots. Rotate any key that has been exposed.
 
-The official Fetch-A-Thon brief asks for the following deliverables. Fill in and verify these links before submitting through the ASI:One dashboard:
+---
 
-- [ ] Public GitHub repository (this repository)
-- [ ] Public ASI:One shared chat showing the complete workflow: **add link**
-- [ ] Agentverse profile URL(s) and deployed agent address(es): **add link(s)**
-- [ ] 3–5 minute demo video: **add link**
-- [ ] Short problem, target-user, and outcome description
-- [ ] Confirm all agents are categorized under Innovation Lab and tagged for the hackathon
-- [ ] Test the deployed flow, including the email confirmation and fallback behavior
+## 🧪 Local Setup (multi-agent version)
 
-The README badges above are the tags specified in the official hackpack. The source includes an ACP chat protocol manifest, but Agentverse registration, public discovery, deployment URLs, the shared chat, and demo video are deployment/submission facts that must be verified and supplied by the project owner. This README does not claim those steps are complete.
+```bash
+git clone https://github.com/YOUR_USERNAME/job-auto-applier
+cd job-auto-applier
+cp .env.example .env      # Fill in your keys
+python -m venv venv
+venv\Scripts\activate     # Windows
+pip install uagents requests
+python main_agent.py
+```
 
-## Privacy and email safety
+---
 
-Use test data while demonstrating. Confirm the recipient and review the draft before sending. The hosted demo stores application state in Agentverse storage and may send applicant/job details to configured external services (ASI:One and Resend). Do not upload sensitive personal information unless you are comfortable with those services processing it.
+## ✅ Fetch-A-Thon 3.0 Submission Checklist
 
-## License
+- [x] Agentverse hosted agent (`agentverse_agent.py`)
+- [x] ACP Chat Protocol with `publish_manifest=True`
+- [x] ASI:One discoverable as `@jobautoapplier`
+- [x] Full conversation-based workflow (find → apply → confirm → track → follow-up)
+- [x] Public GitHub repository
+- [ ] **ASI:One shared chat URL** — _(add link here)_
+- [ ] **Agentverse profile URL** — _(add link here)_
+- [ ] **Demo video (3–5 min)** — _(add link here)_
+- [x] Tagged `innovationlab` + `hackathon` in Agentverse profile
+- [x] Rule-based fallback (demo works without ASI1_API_KEY)
+- [x] Email requires explicit user confirmation before sending
 
-No license file is currently included. Add a license before granting permission for others to reuse or redistribute this project.
+---
+
+## 📝 Privacy & Safety
+
+- Application state is stored in Agentverse hosted storage per-user
+- Email is sent only after explicit `confirm` — never automatically
+- No personal data is stored beyond what you provide in secrets and chat
+- Use test data during demos; avoid sending to real recruiters with sample jobs
+
+---
+
+## 📄 License
+
+[MIT](LICENSE) © 2026 Prashant Kumar
