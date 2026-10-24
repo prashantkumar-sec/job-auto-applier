@@ -75,11 +75,13 @@ FOLLOWUP_DAYS = (3, 7, 14)
 CLOSED_STATUSES = ("interview", "offer", "rejected", "withdrawn")
 VALID_STATUSES = ("applied", "followed_up") + CLOSED_STATUSES
 
-# Used only if the live API fails, so the demo never dies. Clearly labelled in replies.
+# Used only if the live API fails or only senior roles are found. Clearly labelled.
 FALLBACK_JOBS = [
-    {"title": "Backend Engineering Intern", "company": "TechNova (sample)", "url": "", "tags": ["python", "sql"], "description": "python backend sql"},
-    {"title": "Python Developer Intern", "company": "DataSync (sample)", "url": "", "tags": ["python"], "description": "python developer"},
-    {"title": "Software Engineering Intern", "company": "CloudForge (sample)", "url": "", "tags": ["next.js", "python"], "description": "next.js python"},
+    {"title": "Python Developer Intern (sample)", "company": "DataSync", "url": "https://remotive.com/remote-jobs?search=python+intern", "tags": ["python", "sql"], "description": "python backend sql intern"},
+    {"title": "Frontend React Intern (sample)", "company": "TechNova", "url": "https://remotive.com/remote-jobs?search=react+intern", "tags": ["react", "javascript"], "description": "react javascript frontend intern"},
+    {"title": "Full Stack Intern (sample)", "company": "CloudForge", "url": "https://remotive.com/remote-jobs?search=full+stack+intern", "tags": ["next.js", "python", "react"], "description": "next.js python react intern"},
+    {"title": "Junior Software Engineer (sample)", "company": "StartupHub", "url": "https://remotive.com/remote-jobs?search=junior+software+engineer", "tags": ["python", "javascript"], "description": "junior software engineer python"},
+    {"title": "Junior Backend Developer (sample)", "company": "APIFirst", "url": "https://remotive.com/remote-jobs?search=junior+backend+developer", "tags": ["python", "sql", "api"], "description": "junior backend python api sql"},
 ]
 
 
@@ -97,25 +99,40 @@ def score_job(job: dict) -> int:
 
 
 def clean_query(text: str) -> str:
-    """Strip filler words so 'find me python internships' -> 'python'."""
+    """Strip filler words, keep role/tech keywords. Preserves 'intern'/'junior' if present."""
     t = text.lower()
-    for w in ["find", "search", "show", "me", "get", "for", "jobs", "job", "internships", "internship", "intern", "please", "dhundo", "chahiye", "mujhe"]:
+    # Check for internship intent BEFORE stripping keywords
+    wants_intern = bool(re.search(r"\bintern(ship)?s?\b", t))
+    wants_junior = bool(re.search(r"\bjunior\b", t))
+    for w in ["find", "search", "show", "me", "get", "for", "jobs", "job",
+              "internships", "internship", "please", "dhundo", "chahiye", "mujhe",
+              "chahte", "hain", "karo", "lagao"]:
         t = re.sub(rf"\b{w}\b", " ", t)
-    return re.sub(r"\s+", " ", t).strip() or "python"
+    # Don't strip bare 'intern' or 'junior' if that's all that's left
+    core = re.sub(r"\s+", " ", t).strip() or "python"
+    return core, wants_intern or wants_junior
 
 
 def fetch_jobs(query: str, limit: int = 5):
-    """Live jobs from Remotive (no API key). Returns (jobs, is_live)."""
-    q = clean_query(query)
-    senior_words = ("senior", "lead", "principal", "staff", "head", "director", "manager", "architect", "sr.")
-    entry_words = ("intern", "internship", "junior", "trainee", "entry", "graduate", "fresher", "apprentice")
+    """Live jobs from Remotive (no API key). Returns (jobs, is_live, header_note)."""
+    q, wants_entry = clean_query(query)
+    senior_words = ("senior", "lead", "principal", "staff", "head",
+                    "director", "manager", "architect", "sr.", "tech lead", "vp ")
+    entry_words = ("intern", "internship", "junior", "trainee",
+                   "entry", "graduate", "fresher", "apprentice")
 
-    # Try entry-level terms first, then the plain query.
-    terms = [f"{q} intern", "intern", "junior", q, q.split(" ")[0]]
+    # Build search terms — always prioritise entry-level
+    if wants_entry:
+        terms = [f"{q} intern", f"{q} junior", "intern", "junior", q]
+    else:
+        terms = [q, q.split(" ")[0], f"{q} developer", f"{q} engineer"]
+
     seen, jobs = set(), []
     for term in terms:
+        if not term.strip():
+            continue
         try:
-            r = requests.get(REMOTIVE_URL, params={"search": term, "limit": 25}, timeout=HTTP_TIMEOUT)
+            r = requests.get(REMOTIVE_URL, params={"search": term, "limit": 30}, timeout=HTTP_TIMEOUT)
             r.raise_for_status()
             raw = r.json().get("jobs", [])
         except Exception:
@@ -132,7 +149,7 @@ def fetch_jobs(query: str, limit: int = 5):
                 "tags": [t.lower() for t in j.get("tags", [])],
                 "description": re.sub(r"<[^>]+>", " ", j.get("description", ""))[:1500],
             })
-        if len(jobs) >= 15:
+        if len(jobs) >= 20:
             break
 
     if jobs:
@@ -140,13 +157,27 @@ def fetch_jobs(query: str, limit: int = 5):
             title = j["title"].lower()
             j["match_score"] = score_job(j)
             j["entry"] = any(w in title for w in entry_words)
-        filtered = [j for j in jobs if not any(w in j["title"].lower() for w in senior_words)]
-        pool = filtered or jobs
-        pool.sort(key=lambda j: (j["entry"], j["match_score"]), reverse=True)
-        return pool[:limit], True
+            j["is_senior"] = any(w in title for w in senior_words)
 
-    jobs = [dict(j, match_score=score_job(j)) for j in FALLBACK_JOBS]
-    return jobs, False
+        # Remove senior roles — strictly for entry-level queries, loosely otherwise
+        non_senior = [j for j in jobs if not j["is_senior"]]
+
+        if non_senior:
+            non_senior.sort(key=lambda j: (j["entry"], j["match_score"]), reverse=True)
+            return non_senior[:limit], True, "live"
+        elif not wants_entry:
+            # User didn't ask for internships — show best senior results with a note
+            jobs.sort(key=lambda j: j["match_score"], reverse=True)
+            return jobs[:limit], True, "senior_only"
+        else:
+            # Wanted entry-level but only seniors found on Remotive → show sample
+            pass
+
+    # Fallback: API down OR only senior roles found for an entry-level search
+    fallback = [dict(j, match_score=score_job(j)) for j in FALLBACK_JOBS]
+    is_api_live = bool(jobs)  # True = API worked but had only seniors
+    return fallback, False, "senior_filtered" if is_api_live else "api_down"
+
 
 
 def build_draft(job: dict, start_date: str) -> dict:
@@ -706,13 +737,21 @@ async def handle_chat(ctx: Context, sender: str, msg: ChatMessage):
             return
 
         # ---- default: search ----
-        jobs, live = fetch_jobs(text)
+        jobs, live, note = fetch_jobs(text)
         save(ctx, jobs_key, jobs)
         lines = []
         for i, j in enumerate(jobs, 1):
             link = f"\n   {j['url']}" if j.get("url") else ""
             lines.append(f"{i}. {j['title']} at {j['company']} (match {j['match_score']}%){link}")
-        header = "Yeh mile (live, Remotive se):" if live else "Live API abhi down hai, sample data dikha raha hoon:"
+        if note == "live":
+            header = "Yeh mile (Remotive se):"
+        elif note == "senior_only":
+            header = "⚠️ Sirf senior roles mile — entry-level abhi available nahi hain Remotive pe:"
+        elif note == "senior_filtered":
+            header = ("⚠️ Remotive pe abhi sirf senior roles mil rahe hain internship ke liye. "
+                      "Yeh sample jobs dikha raha hoon (labelled):")
+        else:
+            header = "⚠️ Live API abhi down hai, sample data dikha raha hoon:"
         await ctx.send(sender, make_msg(
             f"{header}\n\n" + "\n".join(lines) + "\n\nApply karne ke liye bolo: apply 1"
         ))
