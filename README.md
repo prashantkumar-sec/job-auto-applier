@@ -20,6 +20,7 @@ The current hosted demo is `agentverse_agent.py`. Its chat flow supports:
 Example ASI:One conversation:
 
 ```text
+@jobautoapplier
 find python internships
 apply 2
 confirm
@@ -27,13 +28,15 @@ tracker
 followups
 ```
 
+Find the main agent in [ASI:One Chat](https://asi1.ai/chat) by searching for or mentioning **`@jobautoapplier`**. The shared chat URL for a completed end-to-end demo should still be added below for judges.
+
 The multi-file agent implementation is also present: `main_agent.py`, `scout_agent.py`, `matcher_agent.py`, `writer_agent.py`, `mailer_agent.py`, and `tracher_agent.py` (tracker). The hosted `agentverse_agent.py` is a separate, consolidated implementation; it is not a launcher for those worker files.
 
 ## Agent overview
 
 | Agent / file | Responsibility | Address |
 | --- | --- | --- |
-| Job Auto Applier / `agentverse_agent.py` | ASI:One chat, job search, recruiter simulation, draft/confirmation, tracker and follow-ups | Add deployed Agentverse address |
+| Job Auto Applier / `agentverse_agent.py` | ASI:One chat, job search, recruiter simulation, draft/confirmation, tracker and follow-ups | Discover as `@jobautoapplier` in [ASI:One](https://asi1.ai/chat); add Agentverse profile URL |
 | Main / `main_agent.py` | Alternate chat agent with resume/profile handling and optional worker delegation | Add deployed Agentverse address |
 | Scout / `scout_agent.py` | Periodically requests job searches and sends new-match digests | Add deployed Agentverse address |
 | Matcher / `matcher_agent.py` | De-duplicates and ranks job batches by skills | Add deployed Agentverse address |
