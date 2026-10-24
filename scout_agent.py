@@ -1,19 +1,11 @@
-# scout_agent.py  -  SECOND AGENT: Job Scout (Agentverse HOSTED, separate agent)
-# ----------------------------------------------------------------------------
-# Periodically sends job-related queries to the main Job Auto Applier agent
-# (agent-to-agent, JobQuery -> JobQueryResult), keeps the results, and can
-# email a digest of NEW jobs via Resend.
-#
-# Create a second hosted agent on Agentverse, paste this file, add Secrets:
-#   MAIN_AGENT_ADDRESS   address of job_auto_applier (agent1q...)  <- required
-#   SCOUT_QUERIES        optional, "role|kind|location;role|kind|location"
-#                        e.g. "python developer|internship|India;react developer|internship|Remote"
-#   SCOUT_DIGEST_EMAIL   optional, where to email new jobs (your Resend account email on free tier)
-#   RESEND_API_KEY       only needed for the digest email
-#
+# scout_agent.py - AGENT 2: Scout (Agentverse HOSTED).
+# Every 6h: sends JobQuery to the main agent (all queries in a burst) -> gets JobQueryResult
+#           -> forwards to the Matcher agent (JobBatch) -> gets JobBatchRanked -> emails digest of NEW jobs.
+# If MATCHER_ADDRESS is not set it skips ranking and works like before.
+# Secrets: MAIN_AGENT_ADDRESS (optional, fallback hardcoded), MATCHER_ADDRESS, SCOUT_SKILLS ("python,react,sql"),
+#          SCOUT_QUERIES ("role|kind|location;..."), SCOUT_DIGEST_EMAIL, RESEND_API_KEY
 # Agentverse injects `agent`. Do NOT create Agent() or call run().
-# ----------------------------------------------------------------------------
-
+import asyncio
 import json
 import os
 
@@ -21,13 +13,11 @@ import requests
 from uagents import Context, Model
 
 DEFAULT_QUERIES = "python developer|internship|India;react developer|internship|Remote;backend developer|job|India"
-PERIOD_SECONDS = 6 * 60 * 60  # every 6 hours
-
-# Agent addresses are public, so a hardcoded fallback is fine. The MAIN_AGENT_ADDRESS secret overrides it.
-MAIN_AGENT_FALLBACK = "agent1q0yrr6d64f625r5e8j03qqh9qxq0naf0exwlqmppgsukanyj3pcrxj49dfs"
+PERIOD_SECONDS = 6 * 60 * 60
+MAIN_FALLBACK = "agent1q0yrr6d64f625r5e8j03qqh9qxq0naf0exwlqmppgsukanyj3pcrxj49dfs"
 
 
-# Keep identical to the main agent's models
+# ---- shared models: keep identical in every file that uses them ----
 class JobQuery(Model):
     query: str
     kind: str
@@ -40,10 +30,24 @@ class JobQueryResult(Model):
     results_json: str
 
 
+class JobBatch(Model):
+    request_id: str
+    query: str
+    skills_json: str
+    kind: str
+    jobs_json: str
+
+
+class JobBatchRanked(Model):
+    request_id: str
+    query: str
+    jobs_json: str
+# --------------------------------------------------------------------
+
+
 def get_queries():
-    raw = os.getenv("SCOUT_QUERIES", DEFAULT_QUERIES)
     out = []
-    for part in raw.split(";"):
+    for part in os.getenv("SCOUT_QUERIES", DEFAULT_QUERIES).split(";"):
         bits = [b.strip() for b in part.split("|")]
         if len(bits) == 3 and bits[0]:
             out.append(tuple(bits))
@@ -52,35 +56,41 @@ def get_queries():
 
 @agent.on_interval(period=PERIOD_SECONDS)
 async def send_queries(ctx: Context):
-    main = os.getenv("MAIN_AGENT_ADDRESS", "").strip()
-    if not main:
-        main = MAIN_AGENT_FALLBACK
-        ctx.logger.info("MAIN_AGENT_ADDRESS secret not found, using the hardcoded fallback address")
-    ctx.logger.info(f"Scout sending queries to main agent {main[:14]}...")
-    for role, kind, location in get_queries():
-        ctx.logger.info(f"Sending query: {role} | {kind} | {location}")
-        await ctx.send(main, JobQuery(query=role, kind=kind, location=location))
+    main = os.getenv("MAIN_AGENT_ADDRESS", "").strip() or MAIN_FALLBACK
+    qs = get_queries()
+    ctx.logger.info(f"Scout sending {len(qs)} queries to main agent {main[:14]}...")
+    await asyncio.gather(*(ctx.send(main, JobQuery(query=r, kind=k, location=l)) for r, k, l in qs))
 
 
 def send_digest(new_jobs: list, query: str):
     key, to = os.getenv("RESEND_API_KEY", ""), os.getenv("SCOUT_DIGEST_EMAIL", "")
     if not (key and to and new_jobs):
         return
-    lines = [f"- {j['title']} at {j['company']} ({j.get('location', '')})\n  {j.get('url', '')}" for j in new_jobs]
+    lines = [f"- {j['title']} at {j['company']} ({j.get('location', '')}) match {j.get('match_score', '?')}%\n  {j.get('url', '')}"
+             for j in new_jobs]
     try:
         requests.post(
             "https://api.resend.com/emails",
             headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-            json={
-                "from": os.getenv("RESEND_FROM", "Job Scout <onboarding@resend.dev>"),
-                "to": [to],
-                "subject": f"Job Scout: {len(new_jobs)} new for '{query}'",
-                "text": "New matches:\n\n" + "\n".join(lines),
-            },
+            json={"from": os.getenv("RESEND_FROM", "Job Scout <onboarding@resend.dev>"), "to": [to],
+                  "subject": f"Job Scout: {len(new_jobs)} new for '{query}'",
+                  "text": "New matches:\n\n" + "\n".join(lines)},
             timeout=12,
         )
     except Exception:
         pass
+
+
+async def process(ctx: Context, query: str, source: str, jobs: list):
+    seen = set(json.loads(ctx.storage.get("seen") or "[]"))
+    new = [j for j in jobs if j.get("url") and j["url"] not in seen]
+    seen.update(j["url"] for j in new)
+    ctx.storage.set("seen", json.dumps(list(seen)[-500:]))
+    ctx.storage.set("last_results", json.dumps({"query": query, "source": source, "jobs": jobs}))
+    ctx.logger.info(f"{len(jobs)} jobs for '{query}' via {source}; {len(new)} new")
+    for j in jobs[:5]:
+        ctx.logger.info(f"  - {j.get('title')} at {j.get('company')} | {j.get('match_score', '-')}% | {j.get('url')}")
+    await asyncio.to_thread(send_digest, new, query)
 
 
 @agent.on_message(model=JobQueryResult)
@@ -89,12 +99,22 @@ async def on_results(ctx: Context, sender: str, msg: JobQueryResult):
         jobs = json.loads(msg.results_json)
     except Exception:
         jobs = []
-    seen = set(json.loads(ctx.storage.get("seen") or "[]"))
-    new = [j for j in jobs if j.get("url") and j["url"] not in seen]
-    seen.update(j["url"] for j in new)
-    ctx.storage.set("seen", json.dumps(list(seen)[-500:]))
-    ctx.storage.set("last_results", json.dumps({"query": msg.query, "source": msg.source, "jobs": jobs}))
-    ctx.logger.info(f"Got {len(jobs)} jobs for '{msg.query}' via {msg.source}; {len(new)} new")
-    for j in jobs[:5]:
-        ctx.logger.info(f"  - {j.get('title')} at {j.get('company')} | {j.get('url')}")
-    send_digest(new, msg.query)
+    matcher = os.getenv("MATCHER_ADDRESS", "").strip()
+    if not matcher:
+        await process(ctx, msg.query, msg.source, jobs)
+        return
+    skills = [s.strip().lower() for s in os.getenv("SCOUT_SKILLS", "").split(",") if s.strip()]
+    kind = {r: k for r, k, _ in get_queries()}.get(msg.query, "job")
+    await ctx.send(matcher, JobBatch(request_id=msg.query, query=msg.query, skills_json=json.dumps(skills),
+                                     kind=kind, jobs_json=msg.results_json))
+
+
+@agent.on_message(model=JobBatchRanked)
+async def on_ranked(ctx: Context, sender: str, msg: JobBatchRanked):
+    if sender != os.getenv("MATCHER_ADDRESS", "").strip():
+        return
+    try:
+        jobs = json.loads(msg.jobs_json)
+    except Exception:
+        jobs = []
+    await process(ctx, msg.query, "matcher", jobs)
