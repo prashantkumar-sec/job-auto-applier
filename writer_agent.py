@@ -1,6 +1,11 @@
 # writer_agent.py - AGENT 4: Writer (Agentverse HOSTED). Writes tailored application emails (Groq).
 # Secrets: GROQ_API_KEY (required), GROQ_MODEL (optional), ALLOWED_SENDERS / MAIN_AGENT_ADDRESS (optional)
 # Agentverse injects `agent`. Do NOT create Agent() or call run().
+#
+# DEBUGGING: Check Agentverse logs for:
+#   [STARTUP] Writer agent address: agent1q...   <- copy this into main_agent WRITER_ADDRESS secret
+#   [BLOCKED] sender ...                          <- MAIN_AGENT_ADDRESS secret is wrong/missing
+#   draft ready for ...                           <- success
 import asyncio
 import json
 import os
@@ -31,8 +36,21 @@ class DraftResult(Model):
 
 def allowed(sender: str) -> bool:
     ok = {a.strip() for a in os.getenv("ALLOWED_SENDERS", "").split(",") if a.strip()}
-    ok.add(os.getenv("MAIN_AGENT_ADDRESS", "").strip() or MAIN_FALLBACK)
+    main_addr = os.getenv("MAIN_AGENT_ADDRESS", "").strip() or MAIN_FALLBACK
+    ok.add(main_addr)
     return sender in ok
+
+
+def allowed_or_any(sender: str) -> bool:
+    """If MAIN_AGENT_ADDRESS and ALLOWED_SENDERS are both empty/default, accept anyone.
+    This lets the writer work even before the main agent address is configured."""
+    configured = (
+        os.getenv("MAIN_AGENT_ADDRESS", "").strip()
+        or any(a.strip() for a in os.getenv("ALLOWED_SENDERS", "").split(",") if a.strip())
+    )
+    if not configured:
+        return True  # open mode: no address configured yet, accept all
+    return allowed(sender)
 
 
 def groq_json(messages, max_tokens=600):
@@ -87,16 +105,34 @@ def make_draft(profile: dict, job: dict) -> dict:
     }
 
 
+@agent.on_event("startup")
+async def on_startup(ctx: Context):
+    ctx.logger.info(f"[STARTUP] Writer agent address: {ctx.address}")
+    ctx.logger.info("[STARTUP] Paste the above address into main_agent's WRITER_ADDRESS secret on Agentverse.")
+    key_ok = bool(os.getenv("GROQ_API_KEY", ""))
+    main_configured = bool(os.getenv("MAIN_AGENT_ADDRESS", "").strip())
+    ctx.logger.info(f"[STARTUP] GROQ_API_KEY set: {key_ok} | MAIN_AGENT_ADDRESS set: {main_configured}")
+    if not main_configured:
+        ctx.logger.warning("[STARTUP] MAIN_AGENT_ADDRESS not set — accepting requests from ANY sender (open mode).")
+
+
 @agent.on_message(model=DraftRequest, replies=DraftResult)
 async def on_request(ctx: Context, sender: str, msg: DraftRequest):
-    if not allowed(sender):
-        ctx.logger.warning(f"blocked sender {sender[:14]}")
+    if not allowed_or_any(sender):
+        ctx.logger.warning(
+            f"[BLOCKED] sender={sender} | "
+            f"expected MAIN_AGENT_ADDRESS={os.getenv('MAIN_AGENT_ADDRESS','(not set)')} "
+            f"or FALLBACK={MAIN_FALLBACK} — "
+            "Fix: set MAIN_AGENT_ADDRESS secret on Agentverse to the main agent's address."
+        )
         return
+    ctx.logger.info(f"[REQUEST] DraftRequest from {sender[:20]} | job={msg.job_json[:80]}")
     try:
         profile, job = json.loads(msg.profile_json), json.loads(msg.job_json)
-    except Exception:
+    except Exception as e:
+        ctx.logger.error(f"[ERROR] JSON parse failed: {e}")
         return
     d = await asyncio.to_thread(make_draft, profile, job)
-    ctx.logger.info(f"draft ready for {job.get('company')} / {job.get('title')}")
+    ctx.logger.info(f"[DONE] draft ready: {job.get('company')} / {job.get('title')}")
     await ctx.send(sender, DraftResult(request_id=msg.request_id, user=msg.user,
                                        subject=d["subject"], body=d["body"], job_json=msg.job_json))
